@@ -1,0 +1,28 @@
+module top_module(
+    input  logic        clk, reset,
+    output logic [31:0] WriteData, DataAdr,
+    output logic        MemWrite
+);
+ 
+    logic [31:0] ReadData;
+
+    // Instantiate Processor
+    riscv rv (
+        .clk(clk), 
+        .reset(reset), 
+        .ReadData(ReadData), 
+        .Adr(DataAdr), 
+        .WriteData(WriteData), 
+        .MemWrite(MemWrite)
+    );
+
+    // Instantiate Unified Memory
+    memory dmem (
+        .clk(clk), 
+        .we(MemWrite), 
+        .a(DataAdr), 
+        .wd(WriteData), 
+        .rd(ReadData)
+    );
+
+endmodule
