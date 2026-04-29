@@ -1,0 +1,55 @@
+module riscv(
+    input  logic        clk, reset,
+    input  logic [31:0] ReadData,
+    output logic [31:0] Adr, WriteData,
+    output logic        MemWrite
+);
+ 
+    logic [6:0] op;
+    logic [2:0] funct3;
+    logic       funct7b5, Zero;
+    logic       PCWrite, AdrSrc, IRWrite, RegWrite;
+    logic [1:0] ResultSrc, ALUSrcA, ALUSrcB, ImmSrc;
+    logic [2:0] ALUControl;
+
+    controller u_controller (
+        .clk(clk),
+        .reset(reset),
+        .op(op),
+        .funct3(funct3),
+        .funct7b5(funct7b5),
+        .zero(Zero),
+        .immsrc(ImmSrc),
+        .alusrca(ALUSrcA),
+        .alusrcb(ALUSrcB),
+        .resultsrc(ResultSrc),
+        .adrsrc(AdrSrc),
+        .alucontrol(ALUControl),
+        .irwrite(IRWrite),
+        .pcwrite(PCWrite),
+        .regwrite(RegWrite),
+        .memwrite(MemWrite)
+    );
+
+    datapath u_datapath (
+        .clk(clk),
+        .reset(reset),
+        .PCWrite(PCWrite),
+        .AdrSrc(AdrSrc),
+        .IRWrite(IRWrite),
+        .RegWrite(RegWrite),
+        .ResultSrc(ResultSrc),
+        .ALUSrcA(ALUSrcA),
+        .ALUSrcB(ALUSrcB),
+        .ImmSrc(ImmSrc),
+        .ALUControl(ALUControl),
+        .op(op),
+        .funct3(funct3),
+        .funct7b5(funct7b5),
+        .Zero(Zero),
+        .ReadData(ReadData),
+        .Adr(Adr),
+        .WriteData(WriteData)
+    );
+
+endmodule
