@@ -1,0 +1,246 @@
+module controller (
+
+    input  logic       clk,
+    input  logic       reset,
+    input  logic [6:0] op,
+    input  logic [2:0] funct3,
+    input  logic       funct7b5,
+    input  logic       zero,
+    output logic [1:0] immsrc,
+    output logic [1:0] alusrca, 
+    output logic [1:0] alusrcb,
+    output logic [1:0] resultsrc,
+    output logic       adrsrc,
+    output logic [2:0] alucontrol,
+    output logic       irwrite, 
+    output logic       pcwrite,
+    output logic       regwrite, 
+    output logic       memwrite
+);
+
+    logic [1:0] aluop;
+    logic       branch;
+    logic       pcupdate;
+
+    mainfsm u_mainsfm (
+        .clk(clk),
+        .reset(reset),
+        .op(op),
+        .branch(branch),
+        .pcupdate(pcupdate),
+        .regwrite(regwrite),
+        .memwrite(memwrite),
+        .irwrite(irwrite),
+        .resultsrc(resultsrc),
+        .alusrcb(alusrcb),
+        .alusrca(alusrca),
+        .adrsrc(adrsrc),
+        .aluop(aluop)
+    );
+
+    aludec u_aludec (
+        .opb5(op[5]),
+        .funct3(funct3),
+        .funct7b5(funct7b5),
+        .ALUOP(aluop),
+        .ALUControl(alucontrol)
+    );
+
+    instrdec u_instrdec (
+        .op(op),
+        .ImmSrc(immsrc)
+    );
+
+    assign pcwrite = (branch & zero) | pcupdate;
+
+endmodule
+
+module instrdec (
+    input  logic [6:0] op,
+    output logic [1:0] ImmSrc
+);
+
+    always_comb begin
+        case (op)
+            7'b0110011: ImmSrc = 2'bxx; // R-type 
+            7'b0010011: ImmSrc = 2'b00; // I-type 
+            7'b0000011: ImmSrc = 2'b00; // lw 
+            7'b0100011: ImmSrc = 2'b01; // sw 
+            7'b1100011: ImmSrc = 2'b10; // beq 
+            7'b1101111: ImmSrc = 2'b11; // jal 
+            default:    ImmSrc = 2'bxx; // Unknown instruction
+        endcase
+    end
+endmodule
+
+module aludec (
+    input  logic       opb5,
+    input  logic [2:0] funct3,
+    input  logic       funct7b5,
+    input  logic [1:0] ALUOP,
+    output logic [2:0] ALUControl
+);
+
+    logic RtypeSub;
+    
+    assign RtypeSub = funct7b5 & opb5;
+
+    always_comb begin
+        case (ALUOP)
+            2'b00: ALUControl = 3'b000; // addition
+            2'b01: ALUControl = 3'b001; // subtraction
+            2'b10: begin // R-type or I-type ALU
+                case (funct3)
+                    3'b000: begin
+                        if (RtypeSub) 
+                            ALUControl = 3'b001; // sub
+                        else                 
+                            ALUControl = 3'b000; // add, addi
+                    end
+                    3'b010: ALUControl = 3'b101; // slt, slti
+                    3'b110: ALUControl = 3'b011; // or, ori
+                    3'b111: ALUControl = 3'b010; // and, andi
+                    default: ALUControl = 3'bxxx; // ???
+                endcase
+            end
+            default: ALUControl = 3'bxxx;
+        endcase
+    end
+endmodule
+
+module mainfsm (
+    input  logic       clk,
+    input  logic       reset,
+    input  logic [6:0] op,
+    output logic       branch,
+    output logic       pcupdate,
+    output logic       regwrite,
+    output logic       memwrite,
+    output logic       irwrite,
+    output logic [1:0] resultsrc,
+    output logic [1:0] alusrcb,
+    output logic [1:0] alusrca,
+    output logic       adrsrc,
+    output logic [1:0] aluop
+);
+
+    typedef enum logic [3:0] {
+        S0_FETCH, S1_DECODE, S2_MEMADR, S3_MEMREAD, S4_MEMWB,
+        S5_MEMWRITE, S6_EXECUTER, S7_ALUWB, S8_EXECUTEI, S9_JAL, S10_BEQ
+    } statetype;
+
+    statetype state, nextstate;
+
+    always_ff @(posedge clk or posedge reset) begin
+        if (reset) state <= S0_FETCH;
+        else       state <= nextstate;
+    end
+
+    always_comb begin
+        case (state)
+            S0_FETCH:   nextstate = S1_DECODE;
+            S1_DECODE: begin
+                case (op)
+                    7'b0000011: nextstate = S2_MEMADR;
+                    7'b0100011: nextstate = S2_MEMADR;
+                    7'b0110011: nextstate = S6_EXECUTER;
+                    7'b0010011: nextstate = S8_EXECUTEI;
+                    7'b1101111: nextstate = S9_JAL;
+                    7'b1100011: nextstate = S10_BEQ; 
+                    default:    nextstate = S0_FETCH;
+                endcase
+            end
+            S2_MEMADR: begin
+                if (op == 7'b0000011)      nextstate = S3_MEMREAD;
+                else if (op == 7'b0100011) nextstate = S5_MEMWRITE;
+                else                       nextstate = S0_FETCH;
+            end
+            S3_MEMREAD:  nextstate = S4_MEMWB;
+            S4_MEMWB:    nextstate = S0_FETCH;
+            S5_MEMWRITE: nextstate = S0_FETCH;
+            S6_EXECUTER: nextstate = S7_ALUWB;
+            S7_ALUWB:    nextstate = S0_FETCH;
+            S8_EXECUTEI: nextstate = S7_ALUWB;
+            S9_JAL:      nextstate = S7_ALUWB;
+            S10_BEQ:     nextstate = S0_FETCH;
+            default:     nextstate = S0_FETCH;
+        endcase
+    end
+
+    always_comb begin
+
+        branch    = 1'b0;
+        pcupdate  = 1'b0;
+        regwrite  = 1'b0;
+        memwrite  = 1'b0;
+        irwrite   = 1'b0;
+        resultsrc = 2'b00;
+        alusrcb   = 2'b00;
+        alusrca   = 2'b00;
+        adrsrc    = 1'b0;
+        aluop     = 2'b00;
+
+        case (state)
+            S0_FETCH: begin
+                adrsrc    = 1'b0;
+                irwrite   = 1'b1;
+                alusrca   = 2'b00;
+                alusrcb   = 2'b01;
+                aluop     = 2'b00;
+                resultsrc = 2'b10;
+                pcupdate  = 1'b1;
+            end
+            S1_DECODE: begin
+                alusrca = 2'b01;
+                alusrcb = 2'b10;
+                aluop   = 2'b00;
+            end
+            S2_MEMADR: begin
+                alusrca = 2'b10;
+                alusrcb = 2'b10;
+                aluop   = 2'b00;
+            end
+            S3_MEMREAD: begin
+                resultsrc = 2'b00;
+                adrsrc    = 1'b1;
+            end
+            S4_MEMWB: begin
+                resultsrc = 2'b01;
+                regwrite  = 1'b1;
+            end
+            S5_MEMWRITE: begin
+                resultsrc = 2'b00;
+                adrsrc    = 1'b1;
+                memwrite  = 1'b1;
+            end
+            S6_EXECUTER: begin
+                alusrca = 2'b10;
+                alusrcb = 2'b00;
+                aluop   = 2'b10;
+            end
+            S7_ALUWB: begin
+                resultsrc = 2'b00;
+                regwrite  = 1'b1;
+            end
+            S8_EXECUTEI: begin
+                alusrca = 2'b10;
+                alusrcb = 2'b10;
+                aluop   = 2'b10;
+            end
+            S9_JAL: begin
+                alusrca   = 2'b01;
+                alusrcb   = 2'b01; 
+                aluop     = 2'b00;
+                resultsrc = 2'b00;
+                pcupdate  = 1'b1;
+            end
+            S10_BEQ: begin
+                alusrca   = 2'b10;
+                alusrcb   = 2'b00;
+                aluop     = 2'b01;
+                resultsrc = 2'b00;
+                branch    = 1'b1;
+            end
+        endcase
+    end
+endmodule
